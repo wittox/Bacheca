@@ -12,9 +12,10 @@
   ];
   const SCOPE_CLASSROOM = SCOPES.slice(0, 3);
   const SCOPE_GMAIL = SCOPES[3];
+  // "@scuola" viene sostituito con il dominio dell'account (es. icnigra.edu.it)
   const DEFAULTS = {
-    argoQuery: "newer_than:60d (argo OR circolare OR bacheca)",
-    mailQuery: "newer_than:14d in:inbox -category:promotions -category:social",
+    argoQuery: "newer_than:60d (from:portaleargo.it OR from:argosoft.it OR from:argofamiglia.it OR subject:circolare OR subject:circ.)",
+    mailQuery: "newer_than:30d (from:@scuola OR from:classroom.google.com OR from:portaleargo.it OR from:argosoft.it)",
   };
   const K = { cfg: "bs.cfg.v1", data: "bs.data.v1", tok: "bs.tok.v1" };
 
@@ -31,6 +32,16 @@
 
   const BUILTIN_CLIENT_ID = "793551851465-v01hsqrenpshdfpm5e77ngu29jkiiio8.apps.googleusercontent.com";
   let cfg = Object.assign({ clientId: BUILTIN_CLIENT_ID, email: "" }, DEFAULTS, store.get(K.cfg, {}));
+  // Le ricerche vecchie (troppo larghe) passano alle nuove, solo se non le avevi cambiate tu
+  const OLD_DEFAULTS = ["newer_than:60d (argo OR circolare OR bacheca)", "newer_than:14d in:inbox -category:promotions -category:social"];
+  if (OLD_DEFAULTS.includes(cfg.argoQuery)) cfg.argoQuery = DEFAULTS.argoQuery;
+  if (OLD_DEFAULTS.includes(cfg.mailQuery)) cfg.mailQuery = DEFAULTS.mailQuery;
+  function schoolDomain() { const m = /@(.+)$/.exec(cfg.email || ""); return m ? m[1].toLowerCase() : ""; }
+  function resolveQuery(q) {
+    const d = schoolDomain();
+    // Senza dominio noto (primo accesso) il filtro "@scuola" viene tolto invece di cercare un testo inesistente
+    return d ? q.split("@scuola").join(d) : q.replace(/from:@scuola\s+OR\s+/g, "").replace(/\s+OR\s+from:@scuola/g, "");
+  }
   let data = store.get(K.data, null); // {updatedAt, email, tasks, announcements, argo, posta, errors}
   let token = sess.get(K.tok); // {access_token, exp, scope}
   let ui = { view: "home", filter: "todo", course: "tutti", loading: false };
@@ -252,9 +263,9 @@
 
       const jobs = [];
       // Si prova sempre a leggere: l'errore reale di Google è più affidabile della lista dei permessi.
-      jobs.push(api(GM + "/profile").then((p) => { email = p.emailAddress; }).catch(() => {}));
-      jobs.push(fetchMail(cfg.argoQuery, 25).then((r) => { next.argo = r; }).catch((e) => { errors.argo = explain(e, "Argo (Gmail)"); }));
-      jobs.push(fetchMail(cfg.mailQuery, 25).then((r) => { next.posta = r; }).catch((e) => { errors.posta = explain(e, "Gmail"); }));
+      try { const p = await api(GM + "/profile"); email = p.emailAddress; if (email) { cfg.email = email; saveCfg(); } } catch (e) {}
+      jobs.push(fetchMail(resolveQuery(cfg.argoQuery), 25).then((r) => { next.argo = r; }).catch((e) => { errors.argo = explain(e, "Argo (Gmail)"); }));
+      jobs.push(fetchMail(resolveQuery(cfg.mailQuery), 25).then((r) => { next.posta = r; }).catch((e) => { errors.posta = explain(e, "Gmail"); }));
       jobs.push(fetchClassroom().then((r) => {
         Object.assign(next, { tasks: r.tasks, announcements: r.announcements, courses: r.courses });
         if (r.courseErrors.length) errors.classroomCourses = r.courseErrors;
@@ -406,7 +417,7 @@
     const d = data;
     if (d.errors[kind]) return errBox(d.errors[kind]);
     const ms = [...d[kind]].sort((a, b) => (b.date || 0) - (a.date || 0));
-    const q = kind === "argo" ? cfg.argoQuery : cfg.mailQuery;
+    const q = resolveQuery(kind === "argo" ? cfg.argoQuery : cfg.mailQuery);
     return `<p class="hint" style="margin-top:14px">Ricerca: <code>${esc(q)}</code></p>
       <section class="block" style="margin-top:10px">${list(ms.map((m) => mailItem(m, kind)).join(""), "Nessuna email trovata.")}</section>`;
   }
@@ -422,6 +433,7 @@
         <p class="hint">Sintassi di ricerca Gmail. Quando vedi da che indirizzo arrivano le email di Argo, metti per esempio <code>from:indirizzo</code>.</p>
         <input type="text" id="argoQ" value="${esc(cfg.argoQuery)}" autocomplete="off" spellcheck="false">
         <label for="mailQ">Ricerca per la sezione Posta</label>
+        <p class="hint">Solo email della scuola. <code>@scuola</code> diventa il dominio del tuo account${schoolDomain() ? " (" + esc(schoolDomain()) + ")" : ""}. Per aggiungere un mittente: <code>OR from:indirizzo</code>.</p>
         <input type="text" id="mailQ" value="${esc(cfg.mailQuery)}" autocomplete="off" spellcheck="false">
         <div class="actions"><button class="btn solid" type="submit">Salva e aggiorna</button><button class="btn" type="button" data-act="resetq">Ripristina</button></div>
       </form>
