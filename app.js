@@ -156,8 +156,8 @@
     if (e.status === 401) return "Sessione scaduta. Premi Aggiorna per rientrare.";
     if (e.reason === "SERVICE_DISABLED" || e.reason === "accessNotConfigured" || /has not been used|is disabled/i.test(m))
       return "API:" + what;
-    if (e.status === 403 && /insufficient/i.test(m)) return what + ": non hai concesso questo permesso all'accesso. Esci e rientra spuntando tutte le caselle.";
-    if (e.status === 403) return what + ": accesso negato da Google (" + m + "). Può essere un blocco della scuola.";
+    if (e.status === 403 && /insufficient|scope/i.test(m + " " + e.reason)) return "PERM:" + what + ": manca il permesso.";
+    if (e.status === 403) return what + ": Google ha rifiutato l'accesso. Messaggio di Google: “" + m + "”";
     if (e.status === 429) return what + ": troppe richieste, riprova tra un minuto.";
     return what + ": " + m;
   }
@@ -251,21 +251,14 @@
       const next = { updatedAt: Date.now(), tasks: [], announcements: [], courses: [], argo: [], posta: [], errors };
 
       const jobs = [];
-      if (hasScope(SCOPE_GMAIL)) {
-        jobs.push(api(GM + "/profile").then((p) => { email = p.emailAddress; }).catch(() => {}));
-        jobs.push(fetchMail(cfg.argoQuery, 25).then((r) => { next.argo = r; }).catch((e) => { errors.argo = explain(e, "Argo (Gmail)"); }));
-        jobs.push(fetchMail(cfg.mailQuery, 25).then((r) => { next.posta = r; }).catch((e) => { errors.posta = explain(e, "Gmail"); }));
-      } else {
-        errors.argo = errors.posta = "PERM:Non hai dato il permesso di leggere Gmail.";
-      }
-      if (SCOPE_CLASSROOM.every(hasScope)) {
-        jobs.push(fetchClassroom().then((r) => {
-          Object.assign(next, { tasks: r.tasks, announcements: r.announcements, courses: r.courses });
-          if (r.courseErrors.length) errors.classroomCourses = r.courseErrors;
-        }).catch((e) => { errors.classroom = explain(e, "Classroom"); }));
-      } else {
-        errors.classroom = "PERM:Non hai dato tutti i permessi di Classroom.";
-      }
+      // Si prova sempre a leggere: l'errore reale di Google è più affidabile della lista dei permessi.
+      jobs.push(api(GM + "/profile").then((p) => { email = p.emailAddress; }).catch(() => {}));
+      jobs.push(fetchMail(cfg.argoQuery, 25).then((r) => { next.argo = r; }).catch((e) => { errors.argo = explain(e, "Argo (Gmail)"); }));
+      jobs.push(fetchMail(cfg.mailQuery, 25).then((r) => { next.posta = r; }).catch((e) => { errors.posta = explain(e, "Gmail"); }));
+      jobs.push(fetchClassroom().then((r) => {
+        Object.assign(next, { tasks: r.tasks, announcements: r.announcements, courses: r.courses });
+        if (r.courseErrors.length) errors.classroomCourses = r.courseErrors;
+      }).catch((e) => { errors.classroom = explain(e, "Classroom"); }));
       await Promise.all(jobs);
 
       if (email) { cfg.email = email; saveCfg(); }
@@ -421,6 +414,7 @@
   function renderAccount() {
     return `<div class="card"><span class="eyebrow">Account collegato</span>
         <p style="margin:.5em 0 0;overflow-wrap:anywhere"><b>${esc(cfg.email || "Nessuno")}</b></p>
+        <p class="hint" style="overflow-wrap:anywhere;margin-top:8px">Permessi ricevuti: ${esc(token && token.scope ? token.scope.split(" ").map((x) => x.replace("https://www.googleapis.com/auth/", "")).join(", ") : "nessuna sessione attiva")}</p>
         <div class="actions"><button class="btn" type="button" data-act="switch">Cambia account</button>
         <button class="btn danger" type="button" data-act="logout">Esci</button></div></div>
       <form id="qForm">
