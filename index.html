@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1f4fd1">
+<title>Bacheca Scuola</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Quaderno a quadretti: una colonna, barra in alto, menu in basso */
+:root{
+  --paper:#f7f8fb; --grid:#e3e7f1; --card:#fff; --ink:#1b2340; --muted:#5d6784; --line:#d7dcea;
+  --pen:#1f4fd1; --pen-soft:#e5ecff; --red:#c92a2a; --red-soft:#fde8e8;
+  --cls:#1e7a4c; --cls-soft:#e2f4ea; --argo:#8a4b00; --argo-soft:#fbeedd;
+  --f-display:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+  --f-body:"Atkinson Hyperlegible",ui-sans-serif,system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --paper:#11141d; --grid:#1a1f2e; --card:#171b27; --ink:#e6e9f3; --muted:#9aa3bd; --line:#2a3044;
+  --pen:#7ea2ff; --pen-soft:#1e2a4d; --red:#ff7b7b; --red-soft:#3a1d22;
+  --cls:#5fd197; --cls-soft:#173226; --argo:#f2b36b; --argo-soft:#35261a; color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:22px 22px;color:var(--ink);font:16px/1.5 var(--f-body);-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
+.wrap{max-width:640px;margin:0 auto;padding-inline:16px;padding-block:0 calc(96px + env(safe-area-inset-bottom,0px))}
+header.top{position:sticky;top:0;z-index:5;background:var(--paper);display:flex;align-items:center;gap:12px;
+  padding:calc(12px + env(safe-area-inset-top,0px)) 0 10px;border-bottom:1px solid var(--line)}
+header.top h1{font:800 1.55rem/1.05 var(--f-display);margin:0;flex:1;min-width:0;letter-spacing:-.01em}
+header.top h1 small{display:block;font:500 .7rem/1.4 var(--f-mono);color:var(--muted);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.btn{font:700 .95rem var(--f-body);border:1.5px solid var(--pen);color:var(--pen);background:var(--card);
+  border-radius:999px;padding:9px 15px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;text-decoration:none;white-space:nowrap}
+.btn:active{transform:translateY(1px)}
+.btn.solid{background:var(--pen);color:var(--card)}
+.btn.danger{border-color:var(--red);color:var(--red)}
+.btn[disabled]{opacity:.55}
+.btn:focus-visible,.navbtn:focus-visible,.item:focus-visible,.count:focus-visible{outline:3px solid var(--pen);outline-offset:2px}
+.spin{width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:r .8s linear infinite;display:inline-block}
+@keyframes r{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+.banner{margin-top:14px;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:var(--card);font-size:.95rem}
+.banner.warn{border-color:var(--red);background:var(--red-soft)}
+.banner.info{border-color:var(--pen);background:var(--pen-soft)}
+.banner b{display:block;margin-bottom:2px}
+.summary{margin-top:18px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+.eyebrow{font:500 .72rem/1 var(--f-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.summary p{margin:.5em 0 0;font-size:1.05rem}
+.counts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+.count{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;text-align:left;color:var(--ink);font:inherit;cursor:pointer}
+.count strong{display:block;font:800 1.5rem/1 var(--f-display);font-variant-numeric:tabular-nums}
+.count span{font-size:.8rem;color:var(--muted)}
+section.block{margin-top:24px}
+section.block h2{font:800 1.15rem/1.2 var(--f-display);margin:0 0 10px;display:flex;align-items:baseline;gap:8px}
+section.block h2 .n{font:500 .78rem var(--f-mono);color:var(--muted)}
+.list{display:flex;flex-direction:column;gap:8px;list-style:none;margin:0;padding:0}
+.item{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start;width:100%;text-align:left;background:var(--card);
+  border:1px solid var(--line);border-radius:12px;padding:12px 14px;cursor:pointer;color:var(--ink);font:inherit}
+.item.urgent{border-color:var(--red)}
+.item.done{opacity:.6}
+.date{font:500 .75rem/1.2 var(--f-mono);color:var(--muted);text-align:center;min-width:44px;font-variant-numeric:tabular-nums}
+.date b{display:block;font:800 1.3rem/1 var(--f-display);color:var(--ink)}
+.body{min-width:0}
+.t{font-weight:700;line-height:1.3;overflow-wrap:anywhere;display:block}
+.d{color:var(--muted);font-size:.9rem;margin-top:2px;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chip{font:500 .68rem/1 var(--f-mono);letter-spacing:.04em;text-transform:uppercase;padding:4px 7px;border-radius:4px;background:var(--pen-soft);color:var(--pen)}
+.chip.classroom{background:var(--cls-soft);color:var(--cls)}
+.chip.argo{background:var(--argo-soft);color:var(--argo)}
+.chip.due{background:var(--red-soft);color:var(--red)}
+.empty{color:var(--muted);font-size:.95rem;padding:14px;border:1px dashed var(--line);border-radius:12px;background:var(--card)}
+.filters{display:flex;gap:6px;overflow-x:auto;margin-top:16px;padding-bottom:4px}
+.filters button{flex:none;font:500 .8rem var(--f-mono);border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:6px 11px;cursor:pointer}
+.filters button[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+nav.bottom{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--card);border-top:1px solid var(--line);
+  padding:6px 8px calc(6px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(5,1fr)}
+.navbtn{background:none;border:0;color:var(--muted);font:700 .72rem var(--f-body);display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 2px;cursor:pointer;border-radius:8px}
+.navbtn svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.navbtn[aria-current="page"]{color:var(--pen)}
+.sheet-bg{position:fixed;inset:0;background:rgba(10,14,30,.45);z-index:10}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:11;background:var(--card);border-radius:18px 18px 0 0;max-height:85%;overflow:auto;
+  padding:20px 18px calc(24px + env(safe-area-inset-bottom,0px));max-width:640px;margin:0 auto;border:1px solid var(--line)}
+.sheet h3{font:800 1.3rem/1.2 var(--f-display);margin:8px 0 6px;overflow-wrap:anywhere}
+.meta{font:500 .8rem var(--f-mono);color:var(--muted)}
+.full{margin-top:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-top:16px}
+.card ol{padding-left:1.2em;margin:.5em 0 0}.card li{margin:.35em 0}
+label{display:block;font-weight:700;margin-top:14px}
+.hint{color:var(--muted);font-size:.88rem;margin:4px 0 8px}
+input[type=text]{width:100%;font:500 .9rem var(--f-mono);padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+code{font:500 .85em var(--f-mono);background:var(--pen-soft);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+.hero{margin-top:28px}
+.hero h2{font:800 2rem/1.1 var(--f-display);margin:0 0 8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1 id="viewTitle"><span id="titleText">Bacheca Scuola</span><small id="subtitle"></small></h1>
+    <button class="btn" id="refresh" type="button" hidden><span class="ico">↻</span><span class="lbl">Aggiorna</span></button>
+  </header>
+  <div id="status"></div>
+  <main id="view"></main>
+</div>
+
+<nav class="bottom" id="nav" aria-label="Sezioni" hidden>
+  <button class="navbtn" data-view="home" aria-current="page"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Home</button>
+  <button class="navbtn" data-view="classroom"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>Classroom</button>
+  <button class="navbtn" data-view="argo"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg>Argo</button>
+  <button class="navbtn" data-view="posta"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>Posta</button>
+  <button class="navbtn" data-view="account"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>Account</button>
+</nav>
+
+<div id="sheetBg" class="sheet-bg" hidden></div>
+<div id="sheet" class="sheet" role="dialog" aria-modal="true" hidden></div>
+
+<script src="https://accounts.google.com/gsi/client" async></script>
+<script src="app.js"></script>
+</body>
+</html>

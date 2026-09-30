@@ -1,0 +1,15 @@
+{
+  "name": "Bacheca Scuola",
+  "short_name": "Bacheca",
+  "description": "Classroom, Argo e posta della scuola in un'unica schermata.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f8fb",
+  "theme_color": "#1f4fd1",
+  "lang": "it",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
