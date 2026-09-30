@@ -1,5 +1,5 @@
 // Cache solo dei file dell'app: i dati di Google non vengono mai messi in cache qui.
-const CACHE = "bacheca-v1";
+const CACHE = "bacheca-v2";
 const SHELL = ["./", "index.html", "app.js", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener("activate", (e) => {

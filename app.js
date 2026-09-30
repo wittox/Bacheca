@@ -108,13 +108,13 @@
     return "Errore di accesso Google: " + code;
   }
 
-  async function getToken(chooseAccount) {
-    if (!chooseAccount && tokenValid()) return token;
+  async function getToken(chooseAccount, forceConsent) {
+    if (!chooseAccount && !forceConsent && tokenValid()) return token;
     if (!cfg.clientId) throw new Error("Manca il Client ID.");
     await ensureClient();
     return new Promise((resolve, reject) => {
       pendingToken = { resolve, reject };
-      const opts = { prompt: chooseAccount || !cfg.email ? "select_account" : "" };
+      const opts = { prompt: forceConsent ? "consent" : chooseAccount || !cfg.email ? "select_account" : "" };
       if (cfg.email && !chooseAccount) opts.login_hint = cfg.email;
       tokenClient.requestAccessToken(opts);
     });
@@ -155,7 +155,7 @@
     const m = e.message || "";
     if (e.status === 401) return "Sessione scaduta. Premi Aggiorna per rientrare.";
     if (e.reason === "SERVICE_DISABLED" || e.reason === "accessNotConfigured" || /has not been used|is disabled/i.test(m))
-      return what + ": l'API non è attivata nel tuo progetto Google Cloud. Attivala e riprova.";
+      return "API:" + what;
     if (e.status === 403 && /insufficient/i.test(m)) return what + ": non hai concesso questo permesso all'accesso. Esci e rientra spuntando tutte le caselle.";
     if (e.status === 403) return what + ": accesso negato da Google (" + m + "). Può essere un blocco della scuola.";
     if (e.status === 429) return what + ": troppe richieste, riprova tra un minuto.";
@@ -238,11 +238,11 @@
   }
 
   // ---------- Caricamento ----------
-  async function refresh(chooseAccount) {
+  async function refresh(chooseAccount, forceConsent) {
     if (ui.loading) return;
     ui.loading = true; render();
     try {
-      try { await getToken(chooseAccount); }
+      try { await getToken(chooseAccount, forceConsent); }
       catch (e) { setStatus("warn", "Accesso non riuscito", e.message); return; }
       setStatus("info", "Aggiorno", "Leggo Classroom e Gmail…");
 
@@ -256,7 +256,7 @@
         jobs.push(fetchMail(cfg.argoQuery, 25).then((r) => { next.argo = r; }).catch((e) => { errors.argo = explain(e, "Argo (Gmail)"); }));
         jobs.push(fetchMail(cfg.mailQuery, 25).then((r) => { next.posta = r; }).catch((e) => { errors.posta = explain(e, "Gmail"); }));
       } else {
-        errors.argo = errors.posta = "Non hai concesso l'accesso a Gmail. Vai in Account → Cambia account e spunta tutti i permessi.";
+        errors.argo = errors.posta = "PERM:Non hai dato il permesso di leggere Gmail.";
       }
       if (SCOPE_CLASSROOM.every(hasScope)) {
         jobs.push(fetchClassroom().then((r) => {
@@ -264,7 +264,7 @@
           if (r.courseErrors.length) errors.classroomCourses = r.courseErrors;
         }).catch((e) => { errors.classroom = explain(e, "Classroom"); }));
       } else {
-        errors.classroom = "Non hai concesso tutti i permessi di Classroom. Vai in Account → Cambia account e spunta tutte le caselle.";
+        errors.classroom = "PERM:Non hai dato tutti i permessi di Classroom.";
       }
       await Promise.all(jobs);
 
@@ -272,7 +272,7 @@
       next.email = cfg.email;
       data = next; store.set(K.data, data);
       const errs = [errors.classroom, errors.argo, errors.posta].filter(Boolean);
-      if (errs.length) setStatus("warn", "Alcune parti non si sono caricate", [...new Set(errs)].join(" "));
+      if (errs.length) setStatus("warn", "Alcune parti non si sono caricate", [...new Set(errs.map(errText))].join(" "), errActions(errs));
       else setStatus(null);
     } finally {
       ui.loading = false; render();
@@ -289,12 +289,16 @@
     const overdue = d.tasks.filter((t) => !t.done && t.due != null && t.due < now && now - t.due < 30 * 864e5);
     const unreadArgo = d.argo.filter((m) => m.unread).length;
     const parts = [];
+    const clOk = !(d.errors && d.errors.classroom), mailOk = !(d.errors && d.errors.argo);
+    if (!clOk && !mailOk) return "Non sono riuscito a leggere né Classroom né Gmail: vedi il messaggio sopra.";
     if (today.length) parts.push(`${today.length} ${today.length === 1 ? "consegna" : "consegne"} oggi (${today.map((t) => t.course).join(", ")})`);
     if (tomorrow.length) parts.push(`${tomorrow.length} per domani (${tomorrow.map((t) => t.course).join(", ")})`);
     if (soon.length && soon.length > today.length + tomorrow.length) parts.push(`${soon.length} in totale nei prossimi 7 giorni`);
-    if (!soon.length) parts.push("nessuna consegna nei prossimi 7 giorni");
+    if (!clOk) parts.push("Classroom non caricato");
+    else if (!soon.length) parts.push("nessuna consegna nei prossimi 7 giorni");
     if (overdue.length) parts.push(`${overdue.length} ${overdue.length === 1 ? "compito scaduto non consegnato" : "compiti scaduti non consegnati"}`);
-    if (unreadArgo) parts.push(`${unreadArgo} ${unreadArgo === 1 ? "email Argo non letta" : "email Argo non lette"}`);
+    if (!mailOk) parts.push("Gmail non caricato");
+    else if (unreadArgo) parts.push(`${unreadArgo} ${unreadArgo === 1 ? "email Argo non letta" : "email Argo non lette"}`);
     const s = parts.join(", ");
     return s.charAt(0).toUpperCase() + s.slice(1) + ".";
   }
@@ -328,7 +332,21 @@
       <span class="chips"><span class="chip ${kind === "argo" ? "argo" : ""}">${esc(m.from)}</span>${m.unread ? '<span class="chip due">non letta</span>' : ""}</span></span></button></li>`;
   }
   const list = (html, empty) => (html ? `<ul class="list">${html}</ul>` : `<div class="empty">${esc(empty)}</div>`);
-  const errBox = (msg) => (msg ? `<div class="banner warn">${esc(msg)}</div>` : "");
+  function errText(msg) {
+    if (!msg) return "";
+    if (msg.startsWith("PERM:")) return msg.slice(5) + " Tocca “Concedi permessi” e spunta tutte le caselle.";
+    if (msg.startsWith("API:")) return msg.slice(4) + ": l'API non è attivata nel progetto Google Cloud.";
+    return msg;
+  }
+  function errActions(msgs) {
+    const m = msgs.filter(Boolean);
+    const b = [];
+    if (m.some((x) => x.startsWith("PERM:"))) b.push('<button class="btn solid" type="button" data-act="consent">Concedi permessi</button>');
+    if (m.some((x) => x.startsWith("API:") && /gmail|argo/i.test(x))) b.push('<a class="btn" target="_blank" rel="noopener" href="https://console.cloud.google.com/apis/library/gmail.googleapis.com">Attiva Gmail API</a>');
+    if (m.some((x) => x.startsWith("API:") && /classroom/i.test(x))) b.push('<a class="btn" target="_blank" rel="noopener" href="https://console.cloud.google.com/apis/library/classroom.googleapis.com">Attiva Classroom API</a>');
+    return b.length ? `<div class="actions">${b.join("")}</div>` : "";
+  }
+  const errBox = (msg) => (msg ? `<div class="banner warn">${esc(errText(msg))}${errActions([msg])}</div>` : "");
 
   function renderSetup() {
     const origin = location.origin;
@@ -360,9 +378,9 @@
     const argo = [...d.argo].sort((a, b) => (b.date || 0) - (a.date || 0)).slice(0, 5);
     return `<div class="summary"><span class="eyebrow">Riepilogo</span><p>${esc(buildSummary(d, now))}</p></div>
       <div class="counts">
-        <button class="count" data-go="classroom"><strong>${todo.length}</strong><span>Da consegnare</span></button>
-        <button class="count" data-go="argo"><strong>${d.argo.length}</strong><span>Email Argo</span></button>
-        <button class="count" data-go="posta"><strong>${d.posta.filter((m) => m.unread).length}</strong><span>Non lette</span></button>
+        <button class="count" data-go="classroom"><strong>${d.errors.classroom ? "–" : todo.length}</strong><span>Da consegnare</span></button>
+        <button class="count" data-go="argo"><strong>${d.errors.argo ? "–" : d.argo.length}</strong><span>Email Argo</span></button>
+        <button class="count" data-go="posta"><strong>${d.errors.posta ? "–" : d.posta.filter((m) => m.unread).length}</strong><span>Non lette</span></button>
       </div>
       <section class="block"><h2>In scadenza <span class="n">${todo.length}</span></h2>${errBox(d.errors.classroom)}${d.errors.classroom ? "" : list(todo.slice(0, 8).map((t) => taskItem(t, now)).join(""), "Nessun compito con scadenza da consegnare.")}</section>
       ${overdue.length ? `<section class="block"><h2>Scaduti, non consegnati <span class="n">${overdue.length}</span></h2>${list(overdue.map((t) => taskItem(t, now)).join(""), "")}</section>` : ""}
@@ -440,8 +458,8 @@
     document.querySelectorAll(".navbtn").forEach((b) => (b.dataset.view === v ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current")));
   }
 
-  function setStatus(kind, title, text) {
-    $("#status").innerHTML = kind ? `<div class="banner ${kind}" role="status"><b>${esc(title)}</b>${esc(text)}</div>` : "";
+  function setStatus(kind, title, text, extraHtml) {
+    $("#status").innerHTML = kind ? `<div class="banner ${kind}" role="status"><b>${esc(title)}</b>${esc(text)}${extraHtml || ""}</div>` : "";
   }
 
   // ---------- Dettaglio ----------
@@ -498,6 +516,7 @@
     if (t.id === "sheetBg" || t.closest("#closeSheet")) { closeSheet(); return; }
     const act = t.closest("[data-act]") && t.closest("[data-act]").dataset.act;
     if (act === "login") refresh(true);
+    else if (act === "consent") refresh(false, true);
     else if (act === "switch") { signOut(); render(); refresh(true); }
     else if (act === "logout") { signOut(); setStatus(null); ui.view = "home"; render(); }
     else if (act === "resetq") { cfg.argoQuery = DEFAULTS.argoQuery; cfg.mailQuery = DEFAULTS.mailQuery; saveCfg(); render(); }
