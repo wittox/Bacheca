@@ -9,6 +9,7 @@
     "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
     "https://www.googleapis.com/auth/classroom.announcements.readonly",
     "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly",
   ];
   const SCOPE_CLASSROOM = SCOPES.slice(0, 3);
   const SCOPE_GMAIL = SCOPES[3];
@@ -176,17 +177,35 @@
   const CL = "https://classroom.googleapis.com/v1";
   const GM = "https://gmail.googleapis.com/gmail/v1/users/me";
 
+  // Allegati di Classroom: file Drive, link, video YouTube, moduli
+  function parseMaterials(list) {
+    return (list || []).map((m) => {
+      if (m.driveFile && m.driveFile.driveFile) { const f = m.driveFile.driveFile; return { kind: "file", title: f.title || "File", url: f.alternateLink || "" }; }
+      if (m.youtubeVideo) return { kind: "video", title: m.youtubeVideo.title || "Video", url: m.youtubeVideo.alternateLink || "" };
+      if (m.link) return { kind: "link", title: m.link.title || m.link.url || "Link", url: m.link.url || "" };
+      if (m.form) return { kind: "modulo", title: m.form.title || "Modulo", url: m.form.formUrl || "" };
+      return null;
+    }).filter((x) => x && x.url);
+  }
+
   async function fetchClassroom() {
     const cr = await api(CL + "/courses?studentId=me&courseStates=ACTIVE&pageSize=50");
     const courses = cr.courses || [];
-    const tasks = [], announcements = [], courseErrors = [];
+    const tasks = [], announcements = [], materials = [], courseErrors = [];
+    let materialsError = null;
     await pool(courses, 4, async (c) => {
       try {
-        const [cw, subs, an] = await Promise.all([
+        const [cw, subs, an, mat] = await Promise.all([
           api(`${CL}/courses/${c.id}/courseWork?orderBy=${encodeURIComponent("updateTime desc")}&pageSize=40`).catch((e) => ({ _err: e })),
           api(`${CL}/courses/${c.id}/courseWork/-/studentSubmissions?userId=me&pageSize=100`).catch((e) => ({ _err: e })),
-          api(`${CL}/courses/${c.id}/announcements?orderBy=${encodeURIComponent("updateTime desc")}&pageSize=10`).catch((e) => ({ _err: e })),
+          api(`${CL}/courses/${c.id}/announcements?orderBy=${encodeURIComponent("updateTime desc")}&pageSize=20`).catch((e) => ({ _err: e })),
+          api(`${CL}/courses/${c.id}/courseWorkMaterials?orderBy=${encodeURIComponent("updateTime desc")}&pageSize=30`).catch((e) => ({ _err: e })),
         ]);
+        if (mat._err) { if (!materialsError) materialsError = mat._err; }
+        else (mat.courseWorkMaterial || []).forEach((m) => {
+          materials.push({ id: m.id, courseId: c.id, course: c.name, title: m.title || "(senza titolo)", description: m.description || "",
+            created: Date.parse(m.updateTime || m.creationTime) || null, link: m.alternateLink || "", attachments: parseMaterials(m.materials) });
+        });
         if (cw._err) throw cw._err;
         const subBy = {};
         (subs.studentSubmissions || []).forEach((s) => { subBy[s.courseWorkId] = s; });
@@ -196,15 +215,15 @@
           tasks.push({
             id: w.id, courseId: c.id, course: c.name, title: w.title || "(senza titolo)", description: w.description || "",
             due: dueToMs(w.dueDate, w.dueTime), created: Date.parse(w.creationTime) || null, link: w.alternateLink || c.alternateLink || "",
-            type: w.workType || "", done, late: !!(s && s.late), grade: s && s.assignedGrade != null ? s.assignedGrade : null, maxPoints: w.maxPoints ?? null,
+            type: w.workType || "", attachments: parseMaterials(w.materials), done, late: !!(s && s.late), grade: s && s.assignedGrade != null ? s.assignedGrade : null, maxPoints: w.maxPoints ?? null,
           });
         });
         (an.announcements || []).forEach((a) => {
-          announcements.push({ id: a.id, course: c.name, courseId: c.id, text: a.text || "", created: Date.parse(a.updateTime || a.creationTime) || null, link: a.alternateLink || "" });
+          announcements.push({ id: a.id, course: c.name, courseId: c.id, text: a.text || "", created: Date.parse(a.updateTime || a.creationTime) || null, link: a.alternateLink || "", attachments: parseMaterials(a.materials) });
         });
       } catch (e) { courseErrors.push(c.name + ": " + (e.message || "errore")); }
     });
-    return { courses: courses.map((c) => ({ id: c.id, name: c.name })), tasks, announcements, courseErrors };
+    return { courses: courses.map((c) => ({ id: c.id, name: c.name })), tasks, announcements, materials, courseErrors, materialsError };
   }
 
   function header(msg, name) {
@@ -249,17 +268,19 @@
   }
 
   // ---------- Caricamento ----------
-  async function refresh(chooseAccount, forceConsent) {
+  async function refresh(chooseAccount, forceConsent, silent) {
     if (ui.loading) return;
+    // In automatico non si può aprire il login di Google: se la sessione è scaduta si chiede un tocco
+    if (silent && !tokenValid()) { setStatus("info", "Sessione Google scaduta", "Google chiede di rientrare ogni ora circa.", '<div class="actions"><button class="btn solid" type="button" data-act="relogin">Aggiorna ora</button></div>'); return; }
     ui.loading = true; render();
     try {
       try { await getToken(chooseAccount, forceConsent); }
       catch (e) { setStatus("warn", "Accesso non riuscito", e.message); return; }
-      setStatus("info", "Aggiorno", "Leggo Classroom e Gmail…");
+      if (!silent) setStatus("info", "Aggiorno", "Leggo Classroom e Gmail…");
 
       let email = cfg.email;
       const errors = {};
-      const next = { updatedAt: Date.now(), tasks: [], announcements: [], courses: [], argo: [], posta: [], errors };
+      const next = { updatedAt: Date.now(), tasks: [], announcements: [], materials: [], courses: [], argo: [], posta: [], errors };
 
       const jobs = [];
       // Si prova sempre a leggere: l'errore reale di Google è più affidabile della lista dei permessi.
@@ -267,15 +288,16 @@
       jobs.push(fetchMail(resolveQuery(cfg.argoQuery), 25).then((r) => { next.argo = r; }).catch((e) => { errors.argo = explain(e, "Argo (Gmail)"); }));
       jobs.push(fetchMail(resolveQuery(cfg.mailQuery), 25).then((r) => { next.posta = r; }).catch((e) => { errors.posta = explain(e, "Gmail"); }));
       jobs.push(fetchClassroom().then((r) => {
-        Object.assign(next, { tasks: r.tasks, announcements: r.announcements, courses: r.courses });
+        Object.assign(next, { tasks: r.tasks, announcements: r.announcements, materials: r.materials, courses: r.courses });
         if (r.courseErrors.length) errors.classroomCourses = r.courseErrors;
+        if (r.materialsError) errors.materials = explain(r.materialsError, "Materiali di Classroom");
       }).catch((e) => { errors.classroom = explain(e, "Classroom"); }));
       await Promise.all(jobs);
 
       if (email) { cfg.email = email; saveCfg(); }
       next.email = cfg.email;
       data = next; store.set(K.data, data);
-      const errs = [errors.classroom, errors.argo, errors.posta].filter(Boolean);
+      const errs = [errors.classroom, errors.argo, errors.posta, errors.materials].filter(Boolean);
       if (errs.length) setStatus("warn", "Alcune parti non si sono caricate", [...new Set(errs.map(errText))].join(" "), errActions(errs));
       else setStatus(null);
     } finally {
@@ -318,7 +340,7 @@
       <span class="date"><b>${d.getDate()}</b>${MESI[d.getMonth()]}</span>
       <span class="body"><span class="t">${esc(t.title)}</span>
         ${t.description ? `<span class="d">${esc(t.description)}</span>` : ""}
-        <span class="chips"><span class="chip classroom">${esc(t.course)}</span>${t.done ? '<span class="chip">consegnato</span>' : rel ? `<span class="chip due">${esc(rel)}</span>` : ""}</span>
+        <span class="chips"><span class="chip classroom">${esc(t.course)}</span>${t.done ? '<span class="chip">consegnato</span>' : rel ? `<span class="chip due">${esc(rel)}</span>` : ""}${attChip(t)}</span>
       </span></button></li>`;
   }
   function annItem(a) {
@@ -326,7 +348,21 @@
     return `<li><button class="item" data-kind="ann" data-id="${esc(a.courseId + ":" + a.id)}" type="button">
       <span class="date"><b>${d.getDate()}</b>${MESI[d.getMonth()]}</span>
       <span class="body"><span class="t">${esc(a.course)}</span><span class="d">${esc(a.text)}</span>
-      <span class="chips"><span class="chip classroom">annuncio</span></span></span></button></li>`;
+      <span class="chips"><span class="chip classroom">annuncio</span>${attChip(a)}</span></span></button></li>`;
+  }
+  function attChip(x) { const n = (x.attachments || []).length; return n ? `<span class="chip">${n} ${n === 1 ? "allegato" : "allegati"}</span>` : ""; }
+  function matItem(m) {
+    const d = new Date(m.created || Date.now());
+    return `<li><button class="item" data-kind="mat" data-id="${esc(m.courseId + ":" + m.id)}" type="button">
+      <span class="date"><b>${d.getDate()}</b>${MESI[d.getMonth()]}</span>
+      <span class="body"><span class="t">${esc(m.title)}</span>${m.description ? `<span class="d">${esc(m.description)}</span>` : ""}
+      <span class="chips"><span class="chip classroom">${esc(m.course)}</span><span class="chip">materiale</span>${attChip(m)}</span></span></button></li>`;
+  }
+  function attList(x) {
+    const a = x.attachments || [];
+    if (!a.length) return "";
+    return `<div class="card" style="margin-top:14px"><span class="eyebrow">Allegati</span><ul class="list" style="margin-top:10px">${a.map((f) =>
+      `<li><a class="btn" style="width:100%;justify-content:flex-start;white-space:normal;overflow-wrap:anywhere" href="${esc(f.url)}" target="_blank" rel="noopener"><span class="chip">${esc(f.kind)}</span> ${esc(f.title)}</a></li>`).join("")}</ul></div>`;
   }
   function mailItem(m, kind) {
     const d = new Date(m.date || Date.now());
@@ -389,6 +425,8 @@
       <section class="block"><h2>In scadenza <span class="n">${todo.length}</span></h2>${errBox(d.errors.classroom)}${d.errors.classroom ? "" : list(todo.slice(0, 8).map((t) => taskItem(t, now)).join(""), "Nessun compito con scadenza da consegnare.")}</section>
       ${overdue.length ? `<section class="block"><h2>Scaduti, non consegnati <span class="n">${overdue.length}</span></h2>${list(overdue.map((t) => taskItem(t, now)).join(""), "")}</section>` : ""}
       <section class="block"><h2>Argo <span class="n">${d.argo.length}</span></h2>${errBox(d.errors.argo)}${d.errors.argo ? "" : list(argo.map((m) => mailItem(m, "argo")).join(""), "Nessuna email trovata con la ricerca Argo. Modificala in Account.")}</section>
+      ${(() => { const nm = (d.materials || []).filter((m) => m.created && now - m.created < 7 * 864e5).sort((a, b) => b.created - a.created).slice(0, 5);
+        return nm.length ? `<section class="block"><h2>Nuovi materiali <span class="n">${nm.length}</span></h2>${list(nm.map(matItem).join(""), "")}</section>` : ""; })()}
       <section class="block"><h2>Annunci Classroom</h2>${d.errors.classroom ? "" : list(ann.map(annItem).join(""), "Nessun annuncio recente.")}</section>`;
   }
 
@@ -396,12 +434,15 @@
     const d = data;
     if (d.errors.classroom) return errBox(d.errors.classroom);
     const byCourse = (x) => ui.course === "tutti" || x.courseId === ui.course;
-    const f = [["todo", "Da fare"], ["all", "Tutti i compiti"], ["ann", "Annunci"]]
+    const f = [["todo", "Da fare"], ["all", "Tutti i compiti"], ["mat", "Materiali"], ["ann", "Annunci"]]
       .map(([k, l]) => `<button type="button" data-filter="${k}" aria-pressed="${ui.filter === k}">${l}</button>`).join("");
     const c = [["tutti", "Tutti i corsi"], ...d.courses.map((x) => [x.id, x.name])]
       .map(([k, l]) => `<button type="button" data-course="${esc(k)}" aria-pressed="${ui.course === k}">${esc(l)}</button>`).join("");
     let body;
-    if (ui.filter === "ann") {
+    if (ui.filter === "mat") {
+      body = d.errors.materials ? errBox(d.errors.materials)
+        : list((d.materials || []).filter(byCourse).sort((a, b) => (b.created || 0) - (a.created || 0)).map(matItem).join(""), "Nessun materiale.");
+    } else if (ui.filter === "ann") {
       body = list(d.announcements.filter(byCourse).sort((a, b) => (b.created || 0) - (a.created || 0)).map(annItem).join(""), "Nessun annuncio.");
     } else {
       let ts = d.tasks.filter(byCourse);
@@ -479,14 +520,20 @@
     openSheet(`<span class="chips"><span class="chip classroom">${esc(t.course)}</span>${t.done ? '<span class="chip">consegnato</span>' : rel ? `<span class="chip due">${esc(rel)}</span>` : ""}</span>
       <h3>${esc(t.title)}</h3>
       <div class="meta">${t.due != null ? "Scadenza: " + esc(fmtDay(t.due)) + " " + esc(new Date(t.due).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })) : "Senza scadenza"}</div>${grade}
-      <div class="full">${esc(t.description || "Nessuna descrizione.")}</div>
+      <div class="full">${esc(t.description || "Nessuna descrizione.")}</div>${attList(t)}
       <div class="actions">${t.link ? `<a class="btn solid" href="${esc(t.link)}" target="_blank" rel="noopener">Apri in Classroom</a>` : ""}${closeBtn}</div>`);
   }
   function showAnn(a) {
     openSheet(`<span class="chips"><span class="chip classroom">${esc(a.course)}</span><span class="chip">annuncio</span></span>
       <h3>${esc(a.course)}</h3><div class="meta">${a.created ? esc(fmtDateTime(a.created)) : ""}</div>
-      <div class="full">${esc(a.text)}</div>
+      <div class="full">${esc(a.text)}</div>${attList(a)}
       <div class="actions">${a.link ? `<a class="btn solid" href="${esc(a.link)}" target="_blank" rel="noopener">Apri in Classroom</a>` : ""}${closeBtn}</div>`);
+  }
+  function showMat(m) {
+    openSheet(`<span class="chips"><span class="chip classroom">${esc(m.course)}</span><span class="chip">materiale</span></span>
+      <h3>${esc(m.title)}</h3><div class="meta">${m.created ? esc(fmtDateTime(m.created)) : ""}</div>
+      ${m.description ? `<div class="full">${esc(m.description)}</div>` : ""}${attList(m)}
+      <div class="actions">${m.link ? `<a class="btn solid" href="${esc(m.link)}" target="_blank" rel="noopener">Apri in Classroom</a>` : ""}${closeBtn}</div>`);
   }
   async function showMail(m, kind) {
     const gmailLink = `https://mail.google.com/mail/?authuser=${encodeURIComponent(cfg.email || "")}#all/${encodeURIComponent(m.id)}`;
@@ -516,6 +563,7 @@
       const kind = it.dataset.kind, id = it.dataset.id;
       if (kind === "task") { const x = data.tasks.find((q) => q.courseId + ":" + q.id === id); if (x) showTask(x); }
       else if (kind === "ann") { const x = data.announcements.find((q) => q.courseId + ":" + q.id === id); if (x) showAnn(x); }
+      else if (kind === "mat") { const x = (data.materials || []).find((q) => q.courseId + ":" + q.id === id); if (x) showMat(x); }
       else { const x = data[kind].find((q) => q.id === id); if (x) showMail(x, kind); }
       return;
     }
@@ -523,6 +571,7 @@
     const act = t.closest("[data-act]") && t.closest("[data-act]").dataset.act;
     if (act === "login") refresh(true);
     else if (act === "consent") refresh(false, true);
+    else if (act === "relogin") refresh(false);
     else if (act === "switch") { signOut(); render(); refresh(true); }
     else if (act === "logout") { signOut(); setStatus(null); ui.view = "home"; render(); }
     else if (act === "resetq") { cfg.argoQuery = DEFAULTS.argoQuery; cfg.mailQuery = DEFAULTS.mailQuery; saveCfg(); render(); }
@@ -546,7 +595,14 @@
 
   // ---------- Avvio ----------
   render();
-  if (cfg.clientId && data && tokenValid()) refresh(false);
+  const AUTO_MS = 20 * 60 * 1000;
+  function autoRefresh() {
+    if (!cfg.clientId || !data || ui.loading || document.hidden) return;
+    if (Date.now() - (data.updatedAt || 0) >= AUTO_MS - 5000) refresh(false, false, true);
+  }
+  if (cfg.clientId && data) refresh(false, false, true);
+  setInterval(autoRefresh, 60 * 1000);
+  document.addEventListener("visibilitychange", autoRefresh);
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
 
   // Per i test
